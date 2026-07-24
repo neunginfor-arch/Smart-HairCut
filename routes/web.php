@@ -1,0 +1,63 @@
+<?php
+
+use App\Http\Controllers\AdminController;
+use App\Http\Controllers\BookingController;
+use App\Http\Controllers\MemberController;
+use App\Http\Controllers\LineWebhookController;
+use Illuminate\Support\Facades\Route;
+
+Route::view('/', 'home')->name('home');
+Route::post('/webhooks/line', LineWebhookController::class)->name('line.webhook');
+Route::get('/register', [MemberController::class, 'create'])->name('members.create');
+Route::post('/register', [MemberController::class, 'store'])->name('members.store');
+Route::get('/find-member', [MemberController::class, 'findForm'])->name('members.find');
+Route::post('/find-member', [MemberController::class, 'find'])->middleware('throttle:10,1')->name('members.lookup');
+Route::get('/dashboard', [MemberController::class, 'dashboard'])->middleware('member.session')->name('member.dashboard');
+Route::get('/booking', [BookingController::class, 'create'])->middleware('member.session')->name('bookings.create');
+Route::get('/booking/slots', [BookingController::class, 'slots'])->middleware('member.session')->name('bookings.slots');
+Route::get('/booking/available-employees', [BookingController::class, 'availableEmployees'])->middleware('member.session')->name('bookings.available-employees');
+Route::post('/booking', [BookingController::class, 'store'])->middleware('member.session')->name('bookings.store');
+Route::get('/coupons', [MemberController::class, 'coupons'])->middleware('member.session')->name('coupons.index');
+Route::post('/coupons/{coupon}/redeem', [MemberController::class, 'redeemCoupon'])->middleware('member.session')->name('coupons.redeem');
+Route::get('/points', [MemberController::class, 'points'])->middleware('member.session')->name('points.index');
+Route::prefix('admin')->group(function () {
+    Route::get('/login', [AdminController::class, 'login'])->name('admin.login');
+    Route::post('/login', [AdminController::class, 'authenticate'])->middleware('throttle:5,1')->name('admin.authenticate');
+    Route::post('/logout', [AdminController::class, 'logout'])->middleware('admin.auth')->name('admin.logout');
+    Route::middleware('admin.auth')->group(function(){
+        Route::get('/dashboard', [AdminController::class, 'dashboard'])->name('admin.dashboard');
+        Route::get('/members', [AdminController::class, 'members'])->name('admin.members');
+        Route::post('/members', [AdminController::class, 'storeMember'])->name('admin.members.store');
+        Route::get('/members/{member}/edit', [AdminController::class, 'editMember'])->name('admin.members.edit');
+        Route::put('/members/{member}', [AdminController::class, 'updateMember'])->name('admin.members.update');
+        Route::delete('/members/{member}', [AdminController::class, 'destroyMember'])->name('admin.members.destroy');
+        Route::get('/bookings', [AdminController::class, 'bookings'])->name('admin.bookings');
+        Route::post('/bookings/{booking}/check-in', [AdminController::class, 'checkIn'])->name('admin.bookings.check-in');
+        Route::post('/bookings/{booking}/check-out', [AdminController::class, 'checkOut'])->name('admin.bookings.check-out');
+        Route::post('/bookings/{booking}/cancel', [AdminController::class, 'cancelBooking'])->name('admin.bookings.cancel');
+        Route::get('/booking-setup', [AdminController::class, 'bookingSetup'])->name('admin.booking-setup');
+        Route::post('/shop-closures', [AdminController::class, 'storeShopClosure'])->name('admin.shop-closures.store');
+        Route::put('/shop-closures/{shopClosure}', [AdminController::class, 'updateShopClosure'])->name('admin.shop-closures.update');
+        Route::delete('/shop-closures/{shopClosure}', [AdminController::class, 'destroyShopClosure'])->name('admin.shop-closures.destroy');
+        Route::post('/employee-time-offs', [AdminController::class, 'storeEmployeeTimeOff'])->name('admin.employee-time-offs.store');
+        Route::put('/employee-time-offs/{employeeTimeOff}', [AdminController::class, 'updateEmployeeTimeOff'])->name('admin.employee-time-offs.update');
+        Route::delete('/employee-time-offs/{employeeTimeOff}', [AdminController::class, 'destroyEmployeeTimeOff'])->name('admin.employee-time-offs.destroy');
+        Route::post('/branches', [AdminController::class, 'storeBranch'])->name('admin.branches.store');
+        Route::put('/branches/{branch}', [AdminController::class, 'updateBranch'])->name('admin.branches.update');
+        Route::delete('/branches/{branch}', [AdminController::class, 'destroyBranch'])->name('admin.branches.destroy');
+        Route::post('/employees', [AdminController::class, 'storeEmployee'])->name('admin.employees.store');
+        Route::put('/employees/{employee}', [AdminController::class, 'updateEmployee'])->name('admin.employees.update');
+        Route::delete('/employees/{employee}', [AdminController::class, 'destroyEmployee'])->name('admin.employees.destroy');
+        Route::post('/services', [AdminController::class, 'storeService'])->name('admin.services.store');
+        Route::put('/services/{service}', [AdminController::class, 'updateService'])->name('admin.services.update');
+        Route::delete('/services/{service}', [AdminController::class, 'destroyService'])->name('admin.services.destroy');
+        Route::get('/coupons', [AdminController::class, 'coupons'])->name('admin.coupons');
+        Route::post('/coupons', [AdminController::class, 'storeCoupon'])->name('admin.coupons.store');
+        Route::put('/coupons/{coupon}', [AdminController::class, 'updateCoupon'])->name('admin.coupons.update');
+        Route::delete('/coupons/{coupon}', [AdminController::class, 'destroyCoupon'])->name('admin.coupons.destroy');
+        Route::post('/coupon-usages/{couponUsage}/confirm', [AdminController::class, 'confirmCouponUsage'])->name('admin.coupon-usages.confirm');
+        Route::get('/users', [AdminController::class, 'adminUsers'])->name('admin.users');
+        Route::post('/users', [AdminController::class, 'storeAdminUser'])->name('admin.users.store');
+        Route::get('/{section}', [AdminController::class, 'section'])->where('section', 'coupons|points|notifications')->name('admin.section');
+    });
+});

@@ -1,0 +1,1 @@
+@extends('layouts.app') @section('content')<section class="shell py-20 text-center"><p class="text-xs font-black tracking-widest text-brand">MEMBER AREA</p><h1 class="mt-3 text-4xl font-black">{{ $title }}</h1><p class="mt-3 text-black/55 dark:text-white/55">หน้านี้พร้อมเชื่อมต่อข้อมูลจริงในลำดับถัดไป</p></section>@endsection
