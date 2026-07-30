@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Booking;
+use App\Models\BookingPayment;
 use App\Models\Member;
 use App\Models\NotificationLog;
 use Illuminate\Support\Facades\Http;
@@ -39,6 +40,40 @@ class LineMessagingService
 
         foreach ($this->adminUserIds() as $adminUserId) {
             $this->push($adminUserId, "[แจ้งเตือนผู้ดูแล]\n{$message}", null, $booking, 'booking_confirmation', $this->bookingFlex($booking, true));
+        }
+    }
+
+    public function sendPaymentConfirmation(Booking $booking, BookingPayment $payment): void
+    {
+        $booking->loadMissing(['member', 'branch', 'employee', 'service']);
+        $customerName = trim($booking->member->first_name.' '.$booking->member->last_name);
+        $message = "SM HAIR DESIGN\nยืนยันการชำระเงินและการจองสำเร็จ\n"
+            ."หมายเลขการจอง: {$booking->booking_no}\n"
+            ."ชื่อผู้จอง: {$customerName}\n"
+            .'ยอดที่ชำระ: ฿'.number_format((float) $payment->amount, 2)."\n"
+            ."วันที่: {$booking->booking_date->format('d/m/Y')} เวลา: ".substr($booking->start_time, 0, 5)." น.\n"
+            ."สาขา: {$booking->branch->name}\nช่าง: {$booking->employee->name}";
+
+        if ($booking->member->line_user_id) {
+            $this->push(
+                $booking->member->line_user_id,
+                $message,
+                $booking->member,
+                $booking,
+                'booking_confirmation',
+                $this->bookingFlex($booking, false, $payment)
+            );
+        }
+
+        foreach ($this->adminUserIds() as $adminUserId) {
+            $this->push(
+                $adminUserId,
+                "[แจ้งชำระเงิน]\n{$message}",
+                null,
+                $booking,
+                'booking_confirmation',
+                $this->bookingFlex($booking, true, $payment)
+            );
         }
     }
 
@@ -131,10 +166,103 @@ class LineMessagingService
             ->all();
     }
 
-    private function bookingFlex(Booking $booking, bool $isAdmin = false): array
+    private function bookingFlex(Booking $booking, bool $isAdmin = false, ?BookingPayment $payment = null): array
     {
         $time = substr($booking->start_time, 0, 5).' น.';
         $heading = $isAdmin ? 'มีรายการจองใหม่' : 'ยืนยันการจองสำเร็จ';
+        $customerName = trim($booking->member->first_name.' '.$booking->member->last_name);
+        $bodyContents = [
+            ['type' => 'text', 'text' => $booking->booking_date->format('d/m/Y').' · '.$time, 'weight' => 'bold', 'size' => 'md', 'color' => '#111111'],
+            ['type' => 'separator', 'margin' => 'md'],
+            [
+                'type' => 'box',
+                'layout' => 'horizontal',
+                'margin' => 'md',
+                'contents' => [
+                    ['type' => 'text', 'text' => $time, 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
+                    [
+                        'type' => 'box',
+                        'layout' => 'vertical',
+                        'flex' => 0,
+                        'width' => '20px',
+                        'contents' => [
+                            ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'backgroundColor' => '#C1121F', 'cornerRadius' => '100px', 'contents' => []],
+                            ['type' => 'box', 'layout' => 'vertical', 'width' => '2px', 'height' => '34px', 'backgroundColor' => '#E5E7EB', 'margin' => 'sm', 'contents' => []],
+                        ],
+                    ],
+                    ['type' => 'text', 'text' => $booking->service->name, 'size' => 'sm', 'color' => '#111111', 'weight' => 'bold', 'flex' => 5, 'wrap' => true],
+                ],
+            ],
+            [
+                'type' => 'box',
+                'layout' => 'horizontal',
+                'contents' => [
+                    ['type' => 'text', 'text' => 'สาขา', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
+                    [
+                        'type' => 'box',
+                        'layout' => 'vertical',
+                        'flex' => 0,
+                        'width' => '20px',
+                        'contents' => [
+                            ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'borderColor' => '#C1121F', 'borderWidth' => '2px', 'cornerRadius' => '100px', 'contents' => []],
+                            ['type' => 'box', 'layout' => 'vertical', 'width' => '2px', 'height' => '34px', 'backgroundColor' => '#E5E7EB', 'margin' => 'sm', 'contents' => []],
+                        ],
+                    ],
+                    ['type' => 'text', 'text' => $booking->branch->name, 'size' => 'sm', 'color' => '#111111', 'flex' => 5, 'wrap' => true],
+                ],
+            ],
+            [
+                'type' => 'box',
+                'layout' => 'horizontal',
+                'contents' => [
+                    ['type' => 'text', 'text' => 'ช่าง', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
+                    [
+                        'type' => 'box',
+                        'layout' => 'vertical',
+                        'flex' => 0,
+                        'width' => '20px',
+                        'contents' => [
+                            ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'borderColor' => '#C1121F', 'borderWidth' => '2px', 'cornerRadius' => '100px', 'contents' => []],
+                        ],
+                    ],
+                    ['type' => 'text', 'text' => $booking->employee->name, 'size' => 'sm', 'color' => '#111111', 'flex' => 5, 'wrap' => true],
+                ],
+            ],
+        ];
+
+        if ($payment) {
+            $bodyContents[] = ['type' => 'separator', 'margin' => 'lg'];
+            $bodyContents[] = [
+                'type' => 'box',
+                'layout' => 'horizontal',
+                'margin' => 'md',
+                'contents' => [
+                    ['type' => 'text', 'text' => $isAdmin ? 'ลูกค้า' : 'ชำระแล้ว', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
+                    [
+                        'type' => 'text',
+                        'text' => $isAdmin ? $customerName : '฿'.number_format((float) $payment->amount, 2),
+                        'size' => 'sm',
+                        'color' => '#C1121F',
+                        'weight' => 'bold',
+                        'align' => 'end',
+                        'wrap' => true,
+                        'flex' => 5,
+                    ],
+                ],
+            ];
+
+            if ($isAdmin) {
+                $bodyContents[] = [
+                    'type' => 'box',
+                    'layout' => 'horizontal',
+                    'margin' => 'sm',
+                    'contents' => [
+                        ['type' => 'text', 'text' => 'ยอดชำระ', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
+                        ['type' => 'text', 'text' => '฿'.number_format((float) $payment->amount, 2), 'size' => 'sm', 'color' => '#C1121F', 'weight' => 'bold', 'align' => 'end', 'flex' => 5],
+                    ],
+                ];
+            }
+        }
 
         return [
             'type' => 'flex',
@@ -157,64 +285,7 @@ class LineMessagingService
                     'type' => 'box',
                     'layout' => 'vertical',
                     'spacing' => 'md',
-                    'contents' => [
-                        ['type' => 'text', 'text' => $booking->booking_date->format('d/m/Y').' · '.$time, 'weight' => 'bold', 'size' => 'md', 'color' => '#111111'],
-                        ['type' => 'separator', 'margin' => 'md'],
-                        [
-                            'type' => 'box',
-                            'layout' => 'horizontal',
-                            'margin' => 'md',
-                            'contents' => [
-                                ['type' => 'text', 'text' => $time, 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
-                                [
-                                    'type' => 'box',
-                                    'layout' => 'vertical',
-                                    'flex' => 0,
-                                    'width' => '20px',
-                                    'contents' => [
-                                        ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'backgroundColor' => '#C1121F', 'cornerRadius' => '100px', 'contents' => []],
-                                        ['type' => 'box', 'layout' => 'vertical', 'width' => '2px', 'height' => '34px', 'backgroundColor' => '#E5E7EB', 'margin' => 'sm', 'contents' => []],
-                                    ],
-                                ],
-                                ['type' => 'text', 'text' => $booking->service->name, 'size' => 'sm', 'color' => '#111111', 'weight' => 'bold', 'flex' => 5, 'wrap' => true],
-                            ],
-                        ],
-                        [
-                            'type' => 'box',
-                            'layout' => 'horizontal',
-                            'contents' => [
-                                ['type' => 'text', 'text' => 'สาขา', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
-                                [
-                                    'type' => 'box',
-                                    'layout' => 'vertical',
-                                    'flex' => 0,
-                                    'width' => '20px',
-                                    'contents' => [
-                                        ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'borderColor' => '#C1121F', 'borderWidth' => '2px', 'cornerRadius' => '100px', 'contents' => []],
-                                        ['type' => 'box', 'layout' => 'vertical', 'width' => '2px', 'height' => '34px', 'backgroundColor' => '#E5E7EB', 'margin' => 'sm', 'contents' => []],
-                                    ],
-                                ],
-                                ['type' => 'text', 'text' => $booking->branch->name, 'size' => 'sm', 'color' => '#111111', 'flex' => 5, 'wrap' => true],
-                            ],
-                        ],
-                        [
-                            'type' => 'box',
-                            'layout' => 'horizontal',
-                            'contents' => [
-                                ['type' => 'text', 'text' => 'ช่าง', 'size' => 'sm', 'color' => '#6B7280', 'flex' => 2],
-                                [
-                                    'type' => 'box',
-                                    'layout' => 'vertical',
-                                    'flex' => 0,
-                                    'width' => '20px',
-                                    'contents' => [
-                                        ['type' => 'box', 'layout' => 'vertical', 'width' => '12px', 'height' => '12px', 'borderColor' => '#C1121F', 'borderWidth' => '2px', 'cornerRadius' => '100px', 'contents' => []],
-                                    ],
-                                ],
-                                ['type' => 'text', 'text' => $booking->employee->name, 'size' => 'sm', 'color' => '#111111', 'flex' => 5, 'wrap' => true],
-                            ],
-                        ],
-                    ],
+                    'contents' => $bodyContents,
                 ],
                 'footer' => [
                     'type' => 'box',

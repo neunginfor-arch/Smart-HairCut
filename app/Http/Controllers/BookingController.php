@@ -3,12 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Models\BookingPayment;
 use App\Models\BookingSlot;
 use App\Models\Branch;
+use App\Models\CouponUsage;
 use App\Models\Employee;
 use App\Models\EmployeeTimeOff;
 use App\Models\Service;
 use App\Models\ShopClosure;
+use App\Services\PaymentExpirationService;
 use App\Services\LineMessagingService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -20,17 +23,22 @@ use Illuminate\View\View;
 
 class BookingController extends Controller
 {
-    public function create(): View
+    public function create(Request $request): View
     {
+        $member = $request->attributes->get('member');
+
         return view('member.booking', [
             'branches' => Branch::where('is_active', true)->get(),
             'employees' => Employee::where('is_active', true)->get(),
             'services' => Service::where('is_active', true)->get(),
+            'couponUsages' => $this->availableCouponUsages($member->id),
         ]);
     }
 
-    public function slots(Request $request): JsonResponse
+    public function slots(Request $request, PaymentExpirationService $expiration): JsonResponse
     {
+        $expiration->expireDue();
+
         $data = $request->validate([
             'employee_id' => 'required|exists:employees,id',
             'date' => 'required|date|after_or_equal:today',
@@ -99,7 +107,7 @@ class BookingController extends Controller
         return response()->json(['employee_ids' => $ids]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request, LineMessagingService $line): RedirectResponse
     {
         $data = $request->validate([
             'branch_id' => 'required|exists:branches,id',
@@ -107,6 +115,7 @@ class BookingController extends Controller
             'service_id' => 'required|exists:services,id',
             'booking_date' => 'required|date|after_or_equal:today',
             'start_time' => 'required|date_format:H:i',
+            'coupon_usage_id' => 'nullable|integer|exists:coupon_usages,id',
         ]);
 
         $bookingDate = Carbon::parse($data['booking_date'])->startOfDay();
@@ -138,6 +147,37 @@ class BookingController extends Controller
 
         try {
             $booking = DB::transaction(function () use ($data, $member, $service, $employee, $start, $end) {
+                $couponUsage = null;
+                $subtotal = round((float) $service->price, 2);
+                $discount = 0.0;
+
+                if (!empty($data['coupon_usage_id'])) {
+                    $couponUsage = CouponUsage::with('coupon')
+                        ->whereKey($data['coupon_usage_id'])
+                        ->lockForUpdate()
+                        ->first();
+                    if (!$couponUsage) {
+                        throw new \RuntimeException('ไม่พบคูปองที่เลือก กรุณาเลือกคูปองใหม่');
+                    }
+                    $coupon = $couponUsage->coupon;
+                    $available = $couponUsage->member_id === $member->id
+                        && $couponUsage->booking_id === null
+                        && $couponUsage->used_at === null
+                        && $coupon
+                        && $coupon->is_active
+                        && !$coupon->valid_from->isFuture()
+                        && !$coupon->valid_until->isPast();
+                    if (!$available) {
+                        throw new \RuntimeException('คูปองนี้ไม่พร้อมใช้งาน กรุณาเลือกคูปองใหม่');
+                    }
+
+                    $discount = $coupon->discount_type === 'percentage'
+                        ? $subtotal * min((float) $coupon->discount_value, 100) / 100
+                        : (float) $coupon->discount_value;
+                    $discount = round(min($subtotal, max(0, $discount)), 2);
+                }
+                $payable = round(max(0, $subtotal - $discount), 2);
+
                 $slotTimes = [];
                 for ($time = $start->copy(); $time->lt($end); $time->addHour()) {
                     $slotTimes[] = $time->format('H:i:00');
@@ -162,7 +202,7 @@ class BookingController extends Controller
                     'booking_date' => $data['booking_date'],
                     'start_time' => $start->format('H:i:s'),
                     'end_time' => $end->format('H:i:s'),
-                    'status' => 'confirmed',
+                    'status' => 'pending',
                     'qr_token' => Str::random(64),
                 ]);
 
@@ -175,12 +215,40 @@ class BookingController extends Controller
                     ]);
                 }
 
+                $payment = BookingPayment::create([
+                    'booking_id' => $booking->id,
+                    'subtotal' => $subtotal,
+                    'discount_amount' => $discount,
+                    'coupon_usage_id' => $couponUsage?->id,
+                    'amount' => $payable,
+                    'expires_at' => now()->addMinutes(10),
+                    'status' => $payable > 0 ? 'pending' : 'verified',
+                    'verified_at' => $payable > 0 ? null : now(),
+                ]);
+
+                if ($couponUsage) {
+                    $couponUsage->update([
+                        'booking_id' => $booking->id,
+                        'used_at' => $payable > 0 ? null : now(),
+                    ]);
+                }
+                if ($payable <= 0) {
+                    $booking->update(['status' => 'confirmed']);
+                }
+
                 return $booking;
             });
 
-            app(LineMessagingService::class)->sendBookingConfirmation($booking);
+            $booking->load(['member', 'branch', 'employee', 'service', 'payment']);
+            if ($booking->payment?->status === 'verified') {
+                $line->sendPaymentConfirmation($booking, $booking->payment);
 
-            return redirect()->route('member.dashboard')->with('success', 'จองคิวสำเร็จ หมายเลข: '.$booking->booking_no);
+                return redirect()->route('member.dashboard')
+                    ->with('success', 'ใช้คูปองสำเร็จ ยอดชำระครั้งนี้ ฿0.00 และยืนยันการจองแล้ว');
+            }
+
+            return redirect()->route('payments.show', $booking)
+                ->with('success', 'สร้างรายการจองแล้ว กรุณาชำระเงินเพื่อยืนยันคิว');
         } catch (\RuntimeException $exception) {
             return back()->withInput()->withErrors(['start_time' => $exception->getMessage()]);
         }
@@ -223,5 +291,19 @@ class BookingController extends Controller
             ->where('start_at', '<', $end)
             ->where('end_at', '>', $start)
             ->exists();
+    }
+
+    private function availableCouponUsages(int $memberId)
+    {
+        return CouponUsage::with('coupon')
+            ->where('member_id', $memberId)
+            ->whereNull('booking_id')
+            ->whereNull('used_at')
+            ->whereHas('coupon', fn ($query) => $query
+                ->where('is_active', true)
+                ->whereDate('valid_from', '<=', today())
+                ->whereDate('valid_until', '>=', today()))
+            ->latest()
+            ->get();
     }
 }

@@ -147,4 +147,38 @@
         </div>
     </div>
 </section>
+<section class="shell pb-12">
+    <div class="card">
+        <div class="flex flex-wrap items-start justify-between gap-5">
+            <div>
+                <p class="text-xs font-black tracking-widest text-brand">PAYMENT SETTINGS</p>
+                <h2 class="mt-2 text-2xl font-black">QR Code สำหรับรับชำระเงิน</h2>
+                <p class="mt-2 text-sm text-black/55 dark:text-white/55">อัปโหลด QR ของบัญชีร้าน และระบุข้อมูลผู้รับเพื่อให้ระบบตรวจสลิปได้เข้มงวดยิ่งขึ้น</p>
+            </div>
+            @if($paymentQrPath)
+                <img class="h-32 w-32 rounded-2xl border border-black/10 bg-white object-contain p-2" src="{{ route('payments.qr-image') }}?v={{ now()->timestamp }}" alt="QR รับชำระเงินปัจจุบัน">
+            @endif
+        </div>
+
+        <form class="mt-6 grid gap-4 lg:grid-cols-[1.2fr_1fr_1fr_auto]" method="POST" action="{{ route('admin.payment-settings.update') }}" enctype="multipart/form-data">
+            @csrf
+            <div>
+                <label class="label">รูป QR Code</label>
+                <input name="payment_qr" type="file" accept="image/jpeg,image/png,image/webp" @required(!$paymentQrPath)>
+                <p class="mt-1 text-xs text-black/45 dark:text-white/45">JPG, PNG หรือ WEBP ไม่เกิน 5 MB</p>
+            </div>
+            <div>
+                <label class="label">เลขบัญชีผู้รับ</label>
+                <input name="receiver_account" value="{{ old('receiver_account', $paymentReceiverAccount) }}" placeholder="แนะนำให้กรอกเลขบัญชีเต็ม">
+                <p class="mt-1 text-xs text-black/45 dark:text-white/45">กรอกเลขบัญชีเต็มเพื่อให้ระบบเทียบกับเลขบัญชีแบบปิดบังบนสลิปได้แม่นยำที่สุด</p>
+            </div>
+            <div>
+                <label class="label">ชื่อบัญชีผู้รับ (ภาษาอังกฤษ)</label>
+                <input name="receiver_name" value="{{ old('receiver_name', $paymentReceiverName) }}" placeholder="เช่น SOMCHAI JAIDEE">
+                <p class="mt-1 text-xs text-black/45 dark:text-white/45">กรอกชื่อภาษาอังกฤษให้ตรงกับชื่อบัญชีที่ระบบธนาคารและ GhostX API แสดงผล</p>
+            </div>
+            <button class="btn btn-primary self-end">บันทึกการรับชำระเงิน</button>
+        </form>
+    </div>
+</section>
 @endsection

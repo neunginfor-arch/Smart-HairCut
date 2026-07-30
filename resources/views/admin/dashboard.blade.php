@@ -53,6 +53,7 @@
         <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการคิว</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.bookings') }}">คลิ๊ก</a></div>
         <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการหน้าจองคิว</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.booking-setup') }}">คลิ๊ก</a></div>
         <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการคูปองและคะแนนแลก</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.coupons') }}">คลิ๊ก</a></div>
+        <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการโปรโมชั่น</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.promotions') }}">คลิ๊ก</a></div>
         <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการหน้าการแจ้งเตือน</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.section', 'notifications') }}">คลิ๊ก</a></div>
         <div class="card flex items-center justify-between gap-4"><p class="font-bold">จัดการผู้ดูแลระบบ</p><a class="btn btn-primary px-4 py-2" href="{{ route('admin.users') }}">คลิ๊ก</a></div>
     </div>

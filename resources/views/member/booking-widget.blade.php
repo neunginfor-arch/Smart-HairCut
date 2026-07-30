@@ -27,8 +27,8 @@
             </div>
             <div class="min-w-0">
                 <label class="label"><span class="mr-2 text-brand">03</span>บริการ</label>
-                <select name="service_id">
-                    @foreach($services as $service)<option value="{{ $service->id }}">{{ $service->name }} — {{ $service->duration_minutes }} นาที</option>@endforeach
+                <select name="service_id" data-booking-service>
+                    @foreach($services as $service)<option value="{{ $service->id }}" data-price="{{ $service->price }}">{{ $service->name }} — {{ $service->duration_minutes }} นาที · ฿{{ number_format((float)$service->price, 2) }}</option>@endforeach
                 </select>
             </div>
             <div class="min-w-0 overflow-hidden">
@@ -38,11 +38,29 @@
             </div>
         </div>
 
+        <div class="mt-5 grid gap-5 md:grid-cols-[1fr_auto] md:items-end">
+            <div>
+                <label class="label"><span class="mr-2 text-brand">05</span>คูปองส่วนลด</label>
+                <select name="coupon_usage_id" data-booking-coupon>
+                    <option value="">ไม่ใช้คูปอง</option>
+                    @foreach($couponUsages as $usage)
+                        <option value="{{ $usage->id }}" data-type="{{ $usage->coupon->discount_type }}" data-value="{{ $usage->coupon->discount_value }}">
+                            {{ $usage->coupon->name }} ({{ $usage->coupon->discount_type === 'percentage' ? 'ลด '.$usage->coupon->discount_value.'%' : 'ลด ฿'.number_format((float)$usage->coupon->discount_value, 2) }})
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+            <div class="rounded-2xl bg-black px-5 py-3 text-white md:min-w-64">
+                <div class="flex justify-between gap-5 text-xs text-white/55"><span>ราคา / ส่วนลด</span><span><b data-booking-subtotal>฿0.00</b> / <b class="text-red-400" data-booking-discount>−฿0.00</b></span></div>
+                <div class="mt-1 flex justify-between gap-5 font-black"><span>ยอดต้องชำระ</span><span data-booking-total>฿0.00</span></div>
+            </div>
+        </div>
+
         <input name="start_time" data-booking-time type="hidden">
         <div class="mt-8 border-t border-black/10 pt-6 dark:border-white/10">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <p class="text-xs font-black tracking-[.2em] text-brand">05 / SELECT TIME</p>
+                    <p class="text-xs font-black tracking-[.2em] text-brand">06 / SELECT TIME</p>
                     <h3 class="mt-1 font-black">ช่วงเวลาว่าง</h3>
                 </div>
                 <p class="text-xs text-black/50 dark:text-white/50"><span class="mr-1 inline-block size-2 rounded-full bg-black dark:bg-white"></span>ว่าง <span class="ml-3 mr-1 inline-block size-2 rounded-full bg-neutral-300"></span>ไม่ว่าง</p>
@@ -65,6 +83,24 @@ const bwS = document.querySelector('[data-booking-slots]');
 const bwT = document.querySelector('[data-booking-time]');
 const bwB = document.querySelector('[data-booking-submit]');
 const bwF = document.querySelector('[data-booking-format]');
+const bwService = document.querySelector('[data-booking-service]');
+const bwCoupon = document.querySelector('[data-booking-coupon]');
+const bwSubtotal = document.querySelector('[data-booking-subtotal]');
+const bwDiscount = document.querySelector('[data-booking-discount]');
+const bwTotal = document.querySelector('[data-booking-total]');
+
+function bwUpdateTotals() {
+    const subtotal = Number(bwService.selectedOptions[0]?.dataset.price || 0);
+    const couponOption = bwCoupon.selectedOptions[0];
+    const value = Number(couponOption?.dataset.value || 0);
+    const discount = couponOption?.dataset.type === 'percentage'
+        ? Math.min(subtotal, subtotal * Math.min(value, 100) / 100)
+        : Math.min(subtotal, value);
+    const money = amount => amount.toLocaleString('th-TH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    bwSubtotal.textContent = '฿' + money(subtotal);
+    bwDiscount.textContent = '−฿' + money(discount);
+    bwTotal.textContent = '฿' + money(Math.max(0, subtotal - discount));
+}
 
 function bwShowEmployees(employeeIds) {
     const current = bwE.value;
@@ -151,5 +187,8 @@ async function bwReload() {
 bwR.addEventListener('change', bwReload);
 bwD.addEventListener('change', bwReload);
 bwE.addEventListener('change', bwLoad);
+bwService.addEventListener('change', bwUpdateTotals);
+bwCoupon.addEventListener('change', bwUpdateTotals);
+bwUpdateTotals();
 bwReload();
 </script>

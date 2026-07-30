@@ -32,9 +32,9 @@
                 </div>
                 <div>
                     <label class="label">บริการ</label>
-                    <select name="service_id" required>
+                    <select name="service_id" id="service" required>
                         @foreach($services as $service)
-                            <option value="{{ $service->id }}">{{ $service->name }} — {{ $service->duration_minutes }} นาที</option>
+                            <option value="{{ $service->id }}" data-price="{{ $service->price }}" @selected(old('service_id') == $service->id)>{{ $service->name }} — {{ $service->duration_minutes }} นาที · ฿{{ number_format((float)$service->price, 2) }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -43,6 +43,19 @@
                     <input class="booking-date-input block min-w-0 max-w-full" name="booking_date" id="date" type="date" min="{{ today()->format('Y-m-d') }}" value="{{ old('booking_date', today()->format('Y-m-d')) }}" required>
                     <p id="date-format" class="mt-2 text-xs text-black/50 dark:text-white/50"></p>
                 </div>
+            </div>
+
+            <div class="mt-4">
+                <label class="label">คูปองส่วนลด</label>
+                <select name="coupon_usage_id" id="coupon">
+                    <option value="">ไม่ใช้คูปอง</option>
+                    @foreach($couponUsages as $usage)
+                        <option value="{{ $usage->id }}" data-type="{{ $usage->coupon->discount_type }}" data-value="{{ $usage->coupon->discount_value }}" @selected(old('coupon_usage_id') == $usage->id)>
+                            {{ $usage->coupon->name }} ({{ $usage->coupon->discount_type === 'percentage' ? 'ลด '.$usage->coupon->discount_value.'%' : 'ลด ฿'.number_format((float)$usage->coupon->discount_value, 2) }})
+                        </option>
+                    @endforeach
+                </select>
+                <p class="mt-2 text-xs text-black/50 dark:text-white/50">แสดงเฉพาะคูปองที่แลกด้วยคะแนนแล้วและยังไม่ได้ใช้</p>
             </div>
 
             <div class="mt-7 flex items-center justify-between">
@@ -58,6 +71,11 @@
         <aside class="card h-fit bg-ink text-white">
             <p class="text-xs font-bold tracking-widest text-red-400">YOUR BOOKING</p>
             <p id="summary" class="mt-6 text-sm text-white/60">เลือกวันที่และเวลาที่สะดวก</p>
+            <dl class="mt-6 space-y-3 border-t border-white/15 pt-5 text-sm">
+                <div class="flex justify-between gap-4"><dt class="text-white/55">ราคาบริการ</dt><dd id="booking-subtotal" class="font-bold">฿0.00</dd></div>
+                <div class="flex justify-between gap-4"><dt class="text-white/55">ส่วนลด</dt><dd id="booking-discount" class="font-bold text-red-400">−฿0.00</dd></div>
+                <div class="flex justify-between gap-4 border-t border-white/15 pt-3 text-base"><dt class="font-black">ยอดต้องชำระ</dt><dd id="booking-total" class="font-black">฿0.00</dd></div>
+            </dl>
             <button id="submit-booking" class="btn mt-8 w-full bg-white text-black disabled:cursor-not-allowed disabled:opacity-40" disabled>ยืนยันการจอง</button>
         </aside>
     </form>
@@ -72,6 +90,24 @@ const selected = document.querySelector('#selected-time');
 const submit = document.querySelector('#submit-booking');
 const summary = document.querySelector('#summary');
 const dateFormat = document.querySelector('#date-format');
+const service = document.querySelector('#service');
+const coupon = document.querySelector('#coupon');
+const subtotalOutput = document.querySelector('#booking-subtotal');
+const discountOutput = document.querySelector('#booking-discount');
+const totalOutput = document.querySelector('#booking-total');
+
+function updateTotals() {
+    const subtotal = Number(service.selectedOptions[0]?.dataset.price || 0);
+    const couponOption = coupon.selectedOptions[0];
+    const value = Number(couponOption?.dataset.value || 0);
+    const discount = couponOption?.dataset.type === 'percentage'
+        ? Math.min(subtotal, subtotal * Math.min(value, 100) / 100)
+        : Math.min(subtotal, value);
+    const formatMoney = amount => amount.toLocaleString('th-TH', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    subtotalOutput.textContent = '฿' + formatMoney(subtotal);
+    discountOutput.textContent = '−฿' + formatMoney(discount);
+    totalOutput.textContent = '฿' + formatMoney(Math.max(0, subtotal - discount));
+}
 
 function thaiDate() {
     const [year, month, day] = date.value.split('-');
@@ -167,6 +203,9 @@ async function reloadBooking() {
 branch.addEventListener('change', reloadBooking);
 date.addEventListener('change', reloadBooking);
 employee.addEventListener('change', loadSlots);
+service.addEventListener('change', updateTotals);
+coupon.addEventListener('change', updateTotals);
+updateTotals();
 reloadBooking();
 </script>
 @endsection

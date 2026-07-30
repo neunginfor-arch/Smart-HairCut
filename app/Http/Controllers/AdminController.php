@@ -5,6 +5,7 @@ use App\Models\Admin;
 use App\Models\AdminSession;
 use App\Models\Booking;
 use App\Models\BookingSlot;
+use App\Models\BookingPayment;
 use App\Models\Branch;
 use App\Models\Employee;
 use App\Models\EmployeeTimeOff;
@@ -14,12 +15,14 @@ use App\Models\Member;
 use App\Models\NotificationLog;
 use App\Models\PointHistory;
 use App\Models\Service;
+use App\Models\Setting;
 use App\Models\ShopClosure;
 use App\Models\Role;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -44,7 +47,7 @@ class AdminController extends Controller
     public function dashboard(Request $request): View
     {
         $today=today();
-        $stats=['members_today'=>Member::whereDate('created_at',$today)->count(),'bookings_today'=>Booking::whereDate('booking_date',$today)->whereNotIn('status',['cancelled','no_show'])->count(),'redeemed_discount_month'=>(float) CouponUsage::query()->join('coupons','coupon_usages.coupon_id','=','coupons.id')->whereYear('coupon_usages.created_at',$today->year)->whereMonth('coupon_usages.created_at',$today->month)->where('coupons.discount_type','fixed')->sum('coupons.discount_value'),'sales_today'=>(float)PointHistory::whereDate('created_at',$today)->whereNotNull('sales_amount')->sum('sales_amount'),'sales_month'=>(float)PointHistory::whereYear('created_at',$today->year)->whereMonth('created_at',$today->month)->whereNotNull('sales_amount')->sum('sales_amount'),'sales_year'=>(float)PointHistory::whereYear('created_at',$today->year)->whereNotNull('sales_amount')->sum('sales_amount')];
+        $stats=['members_today'=>Member::whereDate('created_at',$today)->count(),'bookings_today'=>Booking::whereDate('booking_date',$today)->whereNotIn('status',['cancelled','no_show'])->count(),'redeemed_discount_month'=>(float)BookingPayment::where('status','verified')->whereYear('verified_at',$today->year)->whereMonth('verified_at',$today->month)->sum('discount_amount'),'sales_today'=>(float)PointHistory::whereDate('created_at',$today)->whereNotNull('sales_amount')->sum('sales_amount'),'sales_month'=>(float)PointHistory::whereYear('created_at',$today->year)->whereMonth('created_at',$today->month)->whereNotNull('sales_amount')->sum('sales_amount'),'sales_year'=>(float)PointHistory::whereYear('created_at',$today->year)->whereNotNull('sales_amount')->sum('sales_amount')];
         return view('admin.dashboard',['stats'=>$stats,'recentBookings'=>Booking::with(['member','branch','employee','service'])->latest()->take(8)->get(),'admin'=>$request->attributes->get('admin')]);
     }
 
@@ -62,11 +65,11 @@ class AdminController extends Controller
         $member->delete(); return back()->with('success','ลบสมาชิกเรียบร้อยแล้ว');
     }
 
-    public function bookings(): View { return view('admin.bookings',['bookings'=>Booking::with(['member','branch','employee','service'])->latest()->paginate(15)]); }
+    public function bookings(): View { return view('admin.bookings',['bookings'=>Booking::with(['member','branch','employee','service','payment'])->latest()->paginate(15)]); }
 
     public function checkIn(Booking $booking): RedirectResponse
     {
-        if(!in_array($booking->status,['pending','confirmed'],true)) return back()->with('error','รายการนี้ไม่สามารถ Check-in ได้');
+        if($booking->status!=='confirmed') return back()->with('error','ต้องยืนยันการชำระเงินก่อนจึงจะ Check-in ได้');
         $booking->update(['status'=>'checked_in','checked_in_at'=>now()]);
         return back()->with('success','Check-in '.$booking->booking_no.' เรียบร้อยแล้ว');
     }
@@ -76,21 +79,46 @@ class AdminController extends Controller
         if($booking->status!=='checked_in') return back()->with('error','ต้อง Check-in ก่อนจึงจะ Check-out ได้');
         $data=$request->validate(['sales_amount'=>'required|numeric|min:0|max:999999.99']);
         DB::transaction(function() use($booking,$data){
-            $amount=(float)$data['sales_amount']; $points=(int)(floor($amount/100)*10);
+            $payment=BookingPayment::where('booking_id',$booking->id)->where('status','verified')->lockForUpdate()->first();
+            $amount=$payment ? (float)$payment->amount : (float)$data['sales_amount'];
+            $points=(int)(floor($amount/100)*10);
             $booking->update(['status'=>'completed','checked_out_at'=>now()]);
-            PointHistory::updateOrCreate(['booking_id'=>$booking->id],['member_id'=>$booking->member_id,'type'=>'earn','points'=>$points,'sales_amount'=>$amount,'description'=>'คะแนนจากยอดชำระ Booking '.$booking->booking_no]);
+            if($points>0){
+                $identity=$payment ? ['booking_payment_id'=>$payment->id] : ['booking_id'=>$booking->id,'type'=>'earn'];
+                PointHistory::firstOrCreate($identity,['member_id'=>$booking->member_id,'booking_id'=>$booking->id,'type'=>'earn','points'=>$points,'sales_amount'=>$amount,'description'=>'คะแนนจากยอดชำระ Booking '.$booking->booking_no]);
+            }
         });
-        return back()->with('success','Check-out สำเร็จ และเพิ่มคะแนนให้ลูกค้าเรียบร้อยแล้ว');
+        return back()->with('success','Check-out สำเร็จ ระบบตรวจสอบคะแนนจากยอดชำระเรียบร้อยแล้ว');
     }
 
     public function cancelBooking(Booking $booking): RedirectResponse
     {
         if(in_array($booking->status,['cancelled','completed','checked_in'],true)) return back()->with('error','รายการนี้ไม่สามารถยกเลิกได้');
-        DB::transaction(function() use($booking){ BookingSlot::where('booking_id',$booking->id)->delete(); $booking->update(['status'=>'cancelled']); });
+        DB::transaction(function() use($booking){ BookingSlot::where('booking_id',$booking->id)->delete(); CouponUsage::where('booking_id',$booking->id)->whereNull('used_at')->update(['booking_id'=>null]); $booking->update(['status'=>'cancelled']); });
         return back()->with('success','ยกเลิกคิวและคืนช่วงเวลาเรียบร้อยแล้ว');
     }
 
-    public function bookingSetup(): View { return view('admin.booking-setup',['branches'=>Branch::withCount('employees')->latest()->get(),'employees'=>Employee::with('branch')->latest()->get(),'services'=>Service::latest()->get(),'closures'=>ShopClosure::orderBy('start_date')->get(),'timeOffs'=>EmployeeTimeOff::with('employee.branch')->orderBy('start_at')->get()]); }
+    public function bookingSetup(): View { return view('admin.booking-setup',['branches'=>Branch::withCount('employees')->latest()->get(),'employees'=>Employee::with('branch')->latest()->get(),'services'=>Service::latest()->get(),'closures'=>ShopClosure::orderBy('start_date')->get(),'timeOffs'=>EmployeeTimeOff::with('employee.branch')->orderBy('start_at')->get(),'paymentQrPath'=>Setting::valueFor('payment_qr_path'),'paymentReceiverAccount'=>Setting::valueFor('payment_receiver_account'),'paymentReceiverName'=>Setting::valueFor('payment_receiver_name')]); }
+    public function updatePaymentSettings(Request $request): RedirectResponse
+    {
+        $data=$request->validate([
+            'payment_qr'=>'nullable|image|mimes:jpeg,jpg,png,webp|max:5120',
+            'receiver_account'=>'nullable|string|max:30',
+            'receiver_name'=>'nullable|string|max:255',
+        ]);
+
+        if($request->hasFile('payment_qr')){
+            $oldPath=Setting::valueFor('payment_qr_path');
+            $newPath=$request->file('payment_qr')->store('payment-qr');
+            Setting::put('payment_qr_path',$newPath);
+            if($oldPath && $oldPath!==$newPath) Storage::disk('local')->delete($oldPath);
+        }
+
+        Setting::put('payment_receiver_account',preg_replace('/\D+/','',(string)($data['receiver_account'] ?? '')));
+        Setting::put('payment_receiver_name',trim((string)($data['receiver_name'] ?? '')));
+
+        return back()->with('success','อัปเดต QR และข้อมูลรับชำระเงินเรียบร้อยแล้ว');
+    }
     public function storeShopClosure(Request $request): RedirectResponse { ShopClosure::create($this->shopClosureData($request)); return back()->with('success','บันทึกวันหยุดร้านเรียบร้อยแล้ว'); }
     public function updateShopClosure(Request $request, ShopClosure $shopClosure): RedirectResponse { $shopClosure->update($this->shopClosureData($request)); return back()->with('success','อัปเดตวันหยุดร้านเรียบร้อยแล้ว'); }
     public function destroyShopClosure(ShopClosure $shopClosure): RedirectResponse { $shopClosure->delete(); return back()->with('success','ลบวันหยุดร้านเรียบร้อยแล้ว'); }
@@ -99,11 +127,11 @@ class AdminController extends Controller
     public function destroyEmployeeTimeOff(EmployeeTimeOff $employeeTimeOff): RedirectResponse { $employeeTimeOff->delete(); return back()->with('success','ลบวันหยุดพนักงานเรียบร้อยแล้ว'); }
     public function adminUsers(): View { return view('admin.users',['admins'=>Admin::with('role')->latest()->get(),'roles'=>Role::orderBy('id')->get()]); }
     public function storeAdminUser(Request $request): RedirectResponse { $data=$request->validate(['role_id'=>'required|exists:roles,id','name'=>'required|string|max:255','email'=>'required|email|max:255|unique:admins,email','password'=>'required|string|min:10|confirmed']); Admin::create(['role_id'=>$data['role_id'],'name'=>$data['name'],'email'=>$data['email'],'password'=>Hash::make($data['password']),'is_active'=>true]); return back()->with('success','เพิ่มบัญชีผู้ดูแลเรียบร้อยแล้ว'); }
-    public function coupons(): View { return view('admin.coupons',['coupons'=>Coupon::latest()->get(),'pendingUsages'=>\App\Models\CouponUsage::with(['coupon','member'])->whereNull('used_at')->latest()->get(),'redeemedUsages'=>\App\Models\CouponUsage::with(['coupon','member'])->latest()->get()]); }
+    public function coupons(): View { return view('admin.coupons',['coupons'=>Coupon::latest()->get(),'pendingUsages'=>\App\Models\CouponUsage::with(['coupon','member'])->whereNull('booking_id')->whereNull('used_at')->latest()->get(),'redeemedUsages'=>\App\Models\CouponUsage::with(['coupon','member'])->latest()->get()]); }
     public function storeCoupon(Request $request): RedirectResponse { Coupon::create($this->couponData($request)); return back()->with('success','เพิ่มคูปองเรียบร้อยแล้ว'); }
     public function updateCoupon(Request $request, Coupon $coupon): RedirectResponse { $coupon->update($this->couponData($request)); return back()->with('success','อัปเดตคูปองเรียบร้อยแล้ว'); }
     public function destroyCoupon(Coupon $coupon): RedirectResponse { if(\App\Models\CouponUsage::where('coupon_id',$coupon->id)->exists()) return back()->with('error','ไม่สามารถลบคูปองที่มีประวัติการแลกหรือใช้งานได้'); $coupon->delete(); return back()->with('success','ลบคูปองเรียบร้อยแล้ว'); }
-    public function confirmCouponUsage(Request $request, \App\Models\CouponUsage $couponUsage): RedirectResponse { if($couponUsage->used_at) return back()->with('error','คูปองนี้ถูกยืนยันใช้งานแล้ว'); $couponUsage->update(['used_at'=>now(),'confirmed_by_admin_id'=>$request->attributes->get('admin')->id]); return back()->with('success','ยืนยันการใช้คูปองเรียบร้อยแล้ว'); }
+    public function confirmCouponUsage(Request $request, \App\Models\CouponUsage $couponUsage): RedirectResponse { if($couponUsage->used_at) return back()->with('error','คูปองนี้ถูกยืนยันใช้งานแล้ว'); if($couponUsage->booking_id) return back()->with('error','คูปองนี้ผูกกับรายการจองและจะยืนยันอัตโนมัติเมื่อชำระเงินสำเร็จ'); $couponUsage->update(['used_at'=>now(),'confirmed_by_admin_id'=>$request->attributes->get('admin')->id]); return back()->with('success','ยืนยันการใช้คูปองเรียบร้อยแล้ว'); }
     public function storeBranch(Request $request): RedirectResponse { Branch::create($this->branchData($request)); return back()->with('success','เพิ่มสาขาเรียบร้อยแล้ว'); }
     public function updateBranch(Request $request, Branch $branch): RedirectResponse { $branch->update($this->branchData($request)); return back()->with('success','อัปเดตสาขาเรียบร้อยแล้ว'); }
     public function destroyBranch(Branch $branch): RedirectResponse { if($branch->employees()->exists() || Booking::where('branch_id',$branch->id)->exists()) return back()->with('error','ไม่สามารถลบสาขาที่มีช่างหรือประวัติการจองได้'); $branch->delete(); return back()->with('success','ลบสาขาเรียบร้อยแล้ว'); }

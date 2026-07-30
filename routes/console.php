@@ -3,6 +3,7 @@
 use App\Models\Booking;
 use App\Models\NotificationLog;
 use App\Services\LineMessagingService;
+use App\Services\PaymentExpirationService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
@@ -11,7 +12,7 @@ Artisan::command('bookings:send-reminders', function (LineMessagingService $line
     $remindersSent = 0;
 
     $bookings = Booking::with(['member', 'branch', 'employee', 'service'])
-        ->whereIn('status', ['pending', 'confirmed'])
+        ->where('status', 'confirmed')
         ->whereDate('booking_date', '>=', $now->toDateString())
         ->whereDate('booking_date', '<=', $now->copy()->addDay()->toDateString())
         ->get();
@@ -35,6 +36,15 @@ Artisan::command('bookings:send-reminders', function (LineMessagingService $line
     $this->info("Processed {$remindersSent} booking reminder(s).");
 })->purpose('Send LINE reminders 24 hours and 1 hour before a booking');
 
+Artisan::command('bookings:expire-payments', function (PaymentExpirationService $payments) {
+    $expired = $payments->expireDue();
+    $this->info("Expired {$expired} unpaid booking(s).");
+})->purpose('Cancel unpaid bookings after the 10-minute payment window');
+
 Schedule::command('bookings:send-reminders')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+Schedule::command('bookings:expire-payments')
     ->everyMinute()
     ->withoutOverlapping();

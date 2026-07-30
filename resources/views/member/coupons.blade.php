@@ -16,7 +16,7 @@
             <article class="card border-l-4 border-l-brand">
                 <p class="text-xs font-bold text-brand">{{ $coupon->code }}</p>
                 <h2 class="mt-2 text-xl font-black">{{ $coupon->name }}</h2>
-                <p class="mt-2 text-sm text-black/55 dark:text-white/55">{{ $coupon->description ?: 'ใช้สิทธิ์โดยพนักงานยืนยันที่ร้าน' }}</p>
+                <p class="mt-2 text-sm text-black/55 dark:text-white/55">{{ $coupon->description ?: 'แลกคะแนนแล้วเลือกใช้ส่วนลดได้ในหน้าจอง' }}</p>
                 <div class="mt-5 flex items-end justify-between">
                     <p class="text-2xl font-black">{{ $coupon->discount_type === 'percentage' ? $coupon->discount_value.'%' : '฿'.number_format($coupon->discount_value, 2) }}</p>
                     <p class="text-right text-xs text-black/50 dark:text-white/50">วันที่ใช้ {{ $coupon->valid_from->format('d/m/Y') }}<br>สิ้นสุด {{ $coupon->valid_until->format('d/m/Y') }}</p>
@@ -24,7 +24,7 @@
                 @if($coupon->required_points)
                     <div class="mt-5 border-t border-black/10 pt-4 dark:border-white/10">
                         @if(in_array($coupon->id, $redeemed))
-                            <p class="text-sm font-bold text-emerald-600">แลกแล้ว · รอพนักงานยืนยัน</p>
+                            <p class="text-sm font-bold text-emerald-600">แลกแล้ว · เลือกใช้ได้ในหน้าจอง</p>
                         @else
                             <form method="POST" action="{{ route('coupons.redeem', $coupon) }}">
                                 @csrf
